@@ -16,7 +16,14 @@
 		},
 		"preview-apk": {
 			"android": {
-				"buildType": "apk"
+				"buildType": "apk",
+				"gradleCommand": ":app:assembleRelease"
+			},
+			"env": {
+				"EXPO_PUBLIC_SUPABASE_URL": "https://omvbkiynxuvxvdxnaalb.supabase.co",
+				"EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tdmJraXlueHV2eHZkeG5hYWxiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk0MzM4NzUsImV4cCI6MjA3NTAwOTg3NX0.ftNJZyo3y6WZhr-IPMZB2G0vmW--tHjPCUQt5WfYisw",
+				"SUPABASE_SERVICE_ROLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tdmJraXlueHV2eHZkeG5hYWxiIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTQzMzg3NSwiZXhwIjoyMDc1MDA5ODc1fQ.8hBcD2UdlmDRJTn8CHnGanWc0GVwCXsIE0AZkDHAHBI",
+				"EXPO_PUBLIC_PROJECT_GROUP_ID": "campusbite"
 			}
 		},
 		"production": {
