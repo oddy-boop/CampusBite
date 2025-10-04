@@ -1,0 +1,110 @@
+import React, { useEffect } from "react";
+import { View, Text, ActivityIndicator } from "react-native";
+import { useRouter } from "expo-router";
+import { useAuth } from "@/utils/auth/useAuth";
+import { useTheme } from "@/contexts/ThemeContext";
+import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+export default function Index() {
+  const { isAuthenticated, isReady, initiate, auth } = useAuth();
+  const { colors, statusBarStyle } = useTheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  useEffect(() => {
+    initiate();
+    
+    // Fallback timeout to prevent infinite loading
+    const timeout = setTimeout(() => {
+      console.log('Auth timeout - forcing navigation to auth page');
+      router.replace("/auth");
+    }, 5000); // 5 second timeout
+    
+    return () => clearTimeout(timeout);
+  }, [initiate]);
+
+  useEffect(() => {
+    if (isReady) {
+      if (isAuthenticated) {
+        // Check user role and redirect accordingly
+        if (auth?.role === 'vendor') {
+          router.replace("/vendor-dashboard");
+        } else {
+          router.replace("/(tabs)/home");
+        }
+      } else {
+        // User is not authenticated, redirect to auth
+        router.replace("/auth");
+      }
+    }
+  }, [isReady, isAuthenticated, auth, router]);
+
+  // Show loading screen while checking authentication
+  if (!isReady) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: colors.background,
+          justifyContent: "center",
+          alignItems: "center",
+          paddingTop: insets.top,
+        }}
+      >
+        <StatusBar style={statusBarStyle} />
+
+        {/* CampusBite Logo/Branding */}
+        <View
+          style={{
+            backgroundColor: colors.primary,
+            borderRadius: 40,
+            width: 80,
+            height: 80,
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: 24,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 32,
+              fontWeight: "bold",
+              color: "white",
+            }}
+          >
+            🍕
+          </Text>
+        </View>
+
+        <Text
+          style={{
+            fontFamily: "Inter_600SemiBold",
+            fontSize: 28,
+            color: colors.text,
+            marginBottom: 8,
+          }}
+        >
+          CampusBite
+        </Text>
+
+        <Text
+          style={{
+            fontFamily: "Inter_400Regular",
+            fontSize: 16,
+            color: colors.textSecondary,
+            marginBottom: 32,
+            textAlign: "center",
+          }}
+        >
+          Pre-order your favorite campus meals
+        </Text>
+
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  // This should not be reached due to the useEffect above, but just in case
+  return null;
+}
