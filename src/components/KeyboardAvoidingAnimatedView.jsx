@@ -1,31 +1,5 @@
 
-import React, { useRef, useEffect } from 'react';
-import { Platform, Keyboard, KeyboardAvoidingView } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
-
-const KeyboardAvoidingAnimatedView = (props, ref) => {
-  const {
-    children,
-    behavior = Platform.OS === 'ios' ? 'padding' : 'height',
-    keyboardVerticalOffset = 0,
-    style,
-    contentContainerStyle,
-    enabled = true,
-    onLayout,
-    ...leftoverProps
-  } = props;
-
-  const animatedViewRef = useRef(null); // ref to animated view in this polyfill
-  const initialHeightRef = useRef(0); // original height of animated view before keyboard appears
-  const bottomRef = useRef(0); // current bottom offset value of animated view
-  const bottomHeight = useSharedValue(0); // whats going to be added to the bottom when keyboard appears
-
-  useEffect(() => {
-    if (!enabled) return;
-
-    const onKeyboardShow = (event) => {
-      const { duration, endCoordinates } = event;
-      const animatedView = animatedViewRef.current;
+import React, { useRef, useEffect } from 'react';\nimport { Platform, Keyboard, KeyboardAvoidingView, Animated } from 'react-native';\n\nconst KeyboardAvoidingAnimatedView = (props, ref) => {\n  const {\n    children,\n    behavior = Platform.OS === 'ios' ? 'padding' : 'height',\n    keyboardVerticalOffset = 0,\n    style,\n    contentContainerStyle,\n    enabled = true,\n    onLayout,\n    ...leftoverProps\n  } = props;\n\n  const animatedViewRef = useRef(null); // ref to animated view in this polyfill\n  const initialHeightRef = useRef(0); // original height of animated view before keyboard appears\n  const bottomRef = useRef(0); // current bottom offset value of animated view\n  const bottomHeight = useRef(new Animated.Value(0)).current; // whats going to be added to the bottom when keyboard appears\n\n  useEffect(() => {\n    if (!enabled) return;\n\n    const onKeyboardShow = (event) => {\n      const { duration, endCoordinates } = event;\n      const animatedView = animatedViewRef.current;
 
       if (!animatedView) return;
 
