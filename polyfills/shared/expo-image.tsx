@@ -1,7 +1,8 @@
 import type { ImageProps, ImageErrorEventData } from 'expo-image';
 import * as ExpoImage from 'expo-image';
 import { Buffer } from 'buffer';
-import React, { forwardRef, useState, useEffect, useCallback, useRef } from 'react';
+import * as React from 'react';
+const { forwardRef, useState, useEffect, useCallback, useRef } = React;
 import { Platform } from 'react-native';
 
 function buildGridPlaceholder(w: number, h: number): string {

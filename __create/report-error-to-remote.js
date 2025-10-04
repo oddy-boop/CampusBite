@@ -38,6 +38,6 @@ const reportErrorToRemote = async ({ error }) => {
     return { success: false, error: fetchError };
   }
   return { success: true };
-};
+;
 
 module.exports = { reportErrorToRemote };

@@ -13,6 +13,7 @@ import { AppRegistry, LogBox, SafeAreaView, Text, View } from 'react-native';
 import { serializeError } from 'serialize-error';
 import { DeviceErrorBoundaryWrapper } from './__create/DeviceErrorBoundary';
 import { ErrorBoundaryWrapper, SharedErrorBoundary } from './__create/SharedErrorBoundary';
+import React from 'react';
 
 if (__DEV__) {
   LogBox.ignoreAllLogs();
