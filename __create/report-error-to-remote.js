@@ -20,7 +20,6 @@ const reportErrorToRemote = async ({ error }) => {
     );
     return { success: false };
   }
-  }
   try {
     const serialize = await getSerializeError();
     await fetch(process.env.EXPO_PUBLIC_LOGS_ENDPOINT, {
@@ -40,4 +39,3 @@ const reportErrorToRemote = async ({ error }) => {
   return { success: true };
 ;
 
-module.exports = { reportErrorToRemote };
