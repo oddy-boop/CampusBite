@@ -1,4 +1,12 @@
-const { serializeError } = require('serialize-error');
+let serializeError;
+
+const getSerializeError = async () => {
+  if (!serializeError) {
+    const module = await import('serialize-error');
+    serializeError = module.serializeError;
+  }
+  return serializeError;
+};
 
 const reportErrorToRemote = async ({ error }) => {
   if (
@@ -12,7 +20,9 @@ const reportErrorToRemote = async ({ error }) => {
     );
     return { success: false };
   }
+  }
   try {
+    const serialize = await getSerializeError();
     await fetch(process.env.EXPO_PUBLIC_LOGS_ENDPOINT, {
       method: 'POST',
       headers: {
@@ -20,14 +30,8 @@ const reportErrorToRemote = async ({ error }) => {
         Authorization: `Bearer ${process.env.EXPO_PUBLIC_CREATE_TEMP_API_KEY}`,
       },
       body: JSON.stringify({
+        error: serialize(error),
         projectGroupId: process.env.EXPO_PUBLIC_PROJECT_GROUP_ID,
-        logs: [
-          {
-            message: JSON.stringify(serializeError(error)),
-            timestamp: new Date().toISOString(),
-            level: 'error',
-          },
-        ],
       }),
     });
   } catch (fetchError) {
