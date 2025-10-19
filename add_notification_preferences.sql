@@ -1,5 +1,3 @@
--- Migration: Add notification preferences to vendor_profiles table
--- Created: 2025-10-03
 
 -- Add notification preference columns to vendor_profiles
 ALTER TABLE public.vendor_profiles 

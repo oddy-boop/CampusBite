@@ -1,5 +1,4 @@
 {
-  // "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "jsx": "react",
     "lib": [
@@ -27,6 +26,6 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
     "nativewind-env.d.ts"
-  ]
+  ],
+  "extends": "expo/tsconfig.base"
 }
-
