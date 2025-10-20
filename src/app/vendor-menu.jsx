@@ -367,7 +367,7 @@ export default function VendorMenuScreen() {
             textAlign: 'center',
             marginBottom: 20,
           }}>
-            {error}
+            {String(error)}
           </Text>
           <TouchableOpacity
             style={{

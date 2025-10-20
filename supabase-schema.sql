@@ -340,7 +340,16 @@ CREATE POLICY "Anyone can view available menu items" ON public.menu_items
     FOR SELECT USING (is_available = true);
 
 CREATE POLICY "Vendors can manage their own menu items" ON public.menu_items
-    FOR ALL USING (vendor_id = auth.uid());
+    FOR ALL USING (vendor_id = auth.uid())
+    WITH CHECK (vendor_id = auth.uid());
+
+-- Menu categories policies
+CREATE POLICY "Anyone can view menu categories" ON public.menu_categories
+    FOR SELECT USING (true);
+
+CREATE POLICY "Vendors can manage their own menu categories" ON public.menu_categories
+    FOR ALL USING (vendor_id = auth.uid())
+    WITH CHECK (vendor_id = auth.uid());
 
 -- Orders policies
 CREATE POLICY "Users can view their own orders" ON public.orders
@@ -380,9 +389,12 @@ CREATE POLICY "Users can view their own notifications" ON public.notifications
 CREATE POLICY "Users can update their own notifications" ON public.notifications
     FOR UPDATE USING (user_id = auth.uid());
 
--- Vendor analytics policies
-CREATE POLICY "Vendors can view their own analytics" ON public.vendor_analytics
-    FOR SELECT USING (vendor_id = auth.uid());
+-- Vendor operating hours policies
+CREATE POLICY "Anyone can view operating hours" ON public.vendor_operating_hours
+    FOR SELECT USING (true);
+
+CREATE POLICY "Vendors can manage their own operating hours" ON public.vendor_operating_hours
+    FOR ALL USING (vendor_id = auth.uid());
 
 -- Insert default operating hours for new vendors
 CREATE OR REPLACE FUNCTION create_default_operating_hours()

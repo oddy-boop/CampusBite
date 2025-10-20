@@ -4,8 +4,8 @@
     "lib": [
       "ES2021"
     ],
-    "module": "ESNext",
-    "moduleResolution": "Node",
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
     "target": "ES2021",
     "allowJs": true,
     "checkJs": false,
@@ -13,6 +13,7 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "strict": true,
     "paths": {
       "@/*": [

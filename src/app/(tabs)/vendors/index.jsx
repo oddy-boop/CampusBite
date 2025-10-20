@@ -39,6 +39,24 @@ export default function VendorsScreen() {
 
   const headerHeight = 180;
 
+  const loadVendors = async () => {
+    try {
+      setError(null);
+      const { data, error } = await getVendors();
+      if (error) throw error;
+      setVendors(data || []);
+    } catch (err) {
+      console.error('Failed to load vendors:', err);
+      setError(err.message || 'An unexpected error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadVendors();
+  }, []);
+
   // Categories
   const categories = [
     { id: 'all', name: 'All', icon: '🍽️' },

@@ -9,7 +9,7 @@ export const vendorService = {
         .from('vendor_profiles')
         .select(`
           *,
-          users!inner(id, email, full_name, phone)
+          users!id(id, email, full_name, phone)
         `)
         .eq('id', userId)
         .single();
@@ -202,6 +202,56 @@ export const vendorService = {
       return { data, error: null };
     } catch (error) {
       console.error('Error fetching menu categories:', error);
+      return { data: null, error };
+    }
+  },
+
+  // Add/Update menu category
+  async saveMenuCategory(vendorId, categoryData, categoryId = null) {
+    try {
+      const payload = { ...categoryData, vendor_id: vendorId };
+      let result;
+      if (categoryId) {
+        // Update
+        const { data, error } = await supabase
+          .from('menu_categories')
+          .update(payload)
+          .eq('id', categoryId)
+          .eq('vendor_id', vendorId)
+          .select()
+          .single();
+        result = { data, error };
+      } else {
+        // Create
+        const { data, error } = await supabase
+          .from('menu_categories')
+          .insert(payload)
+          .select()
+          .single();
+        result = { data, error };
+      }
+      if (result.error) throw result.error;
+      return { data: result.data, error: null };
+    } catch (error) {
+      console.error('Error saving menu category:', error);
+      return { data: null, error };
+    }
+  },
+
+  // Delete menu category
+  async deleteMenuCategory(vendorId, categoryId) {
+    try {
+      // TODO: Check if any menu items are using this category first
+      const { data, error } = await supabase
+        .from('menu_categories')
+        .delete()
+        .eq('id', categoryId)
+        .eq('vendor_id', vendorId);
+      
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error) {
+      console.error('Error deleting menu category:', error);
       return { data: null, error };
     }
   },
