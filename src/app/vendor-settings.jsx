@@ -258,10 +258,8 @@ export default function VendorSettingsScreen() {
 
   const handleSaveSettings = async () => {
     try {
-      if (!vendorProfile?.id) {
-        Alert.alert('Error', 'Vendor profile not found');
-        return;
-      }
+      // If vendor profile doesn't exist yet, create it instead of updating
+      const isCreating = !vendorProfile?.id;
 
       setSaving(true);
 
@@ -282,8 +280,13 @@ export default function VendorSettingsScreen() {
       console.log('Updating vendor profile:', vendorProfile.id);
       console.log('Update data:', updateData);
 
-      // Update vendor profile
-      const result = await vendorService.updateVendorProfile(vendorProfile.id, updateData);
+      // Create or update vendor profile
+      let result;
+      if (isCreating) {
+        result = await vendorService.createVendorProfile(auth.id, updateData);
+      } else {
+        result = await vendorService.updateVendorProfile(vendorProfile.id, updateData);
+      }
 
       console.log('Update result:', result);
 

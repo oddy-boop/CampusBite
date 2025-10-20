@@ -169,6 +169,7 @@ CREATE TABLE public.reviews (
 CREATE TABLE public.notifications (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    created_by UUID REFERENCES public.users(id),
     title TEXT NOT NULL,
     message TEXT NOT NULL,
     type TEXT NOT NULL, -- 'order_update', 'promotion', 'system', etc.
@@ -176,6 +177,9 @@ CREATE TABLE public.notifications (
     is_read BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Helpful index on created_by for audit / querying
+CREATE INDEX IF NOT EXISTS idx_notifications_created_by ON public.notifications(created_by);
 
 -- Vendor analytics (for caching computed data)
 CREATE TABLE public.vendor_analytics (
@@ -207,6 +211,38 @@ CREATE INDEX idx_order_items_order ON public.order_items(order_id);
 CREATE INDEX idx_notifications_user ON public.notifications(user_id);
 CREATE INDEX idx_notifications_unread ON public.notifications(user_id, is_read);
 CREATE INDEX idx_vendor_analytics_date ON public.vendor_analytics(vendor_id, date);
+
+-- MIGRATION: link existing vendor_profiles to users via owner_user_id where possible
+-- Run these manually in the SQL editor if you want to auto-link profiles to user accounts.
+-- 1) Link by exact email match
+-- UPDATE public.vendor_profiles vp
+-- SET owner_user_id = u.id
+-- FROM public.users u
+-- WHERE vp.owner_user_id IS NULL
+--   AND vp.business_email IS NOT NULL
+--   AND u.email IS NOT NULL
+--   AND lower(trim(vp.business_email)) = lower(trim(u.email));
+
+-- 2) Link by phone normalization
+-- UPDATE public.vendor_profiles vp
+-- SET owner_user_id = u.id
+-- FROM public.users u
+-- WHERE vp.owner_user_id IS NULL
+--   AND vp.business_phone IS NOT NULL
+--   AND u.phone IS NOT NULL
+--   AND regexp_replace(vp.business_phone, '[^0-9]', '', 'g') = regexp_replace(u.phone, '[^0-9]', '', 'g');
+
+-- 3) For any vendor_profile whose id equals a user's id (legacy), link owner_user_id
+-- UPDATE public.vendor_profiles vp
+-- SET owner_user_id = vp.id
+-- WHERE vp.owner_user_id IS NULL
+--   AND EXISTS (SELECT 1 FROM public.users u WHERE u.id = vp.id);
+
+-- Preview potential matches for manual review (run before UPDATEs above):
+-- SELECT vp.id AS vp_id, vp.business_name, vp.business_email, u.id AS user_id, u.email
+-- FROM public.vendor_profiles vp
+-- JOIN public.users u ON lower(trim(vp.business_email)) = lower(trim(u.email))
+-- LIMIT 50;
 
 -- Create functions for automatic timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -286,17 +322,51 @@ CREATE TRIGGER update_vendor_rating_trigger AFTER INSERT OR UPDATE ON public.rev
 CREATE OR REPLACE FUNCTION add_order_status_history()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Insert status history for new orders
+    -- Insert status history for new orders (creator is the authenticated user)
     IF TG_OP = 'INSERT' THEN
         INSERT INTO public.order_status_history (order_id, status, created_by)
-        VALUES (NEW.id, NEW.status, NEW.customer_id);
+        VALUES (NEW.id, NEW.status, auth.uid());
+
+        -- Notify the vendor that a new order has been placed
+        BEGIN
+            INSERT INTO public.notifications (user_id, created_by, title, message, type, data)
+            VALUES (
+                NEW.vendor_id,
+                auth.uid(),
+                'New Order',
+                'A new order has been placed',
+                'order_update',
+                jsonb_build_object('order_id', NEW.id)
+            );
+        EXCEPTION WHEN OTHERS THEN
+            -- ignore notification errors
+            NULL;
+        END;
         RETURN NEW;
     END IF;
     
-    -- Insert status history for status changes
+    -- Insert status history for status changes (creator is the authenticated user)
     IF TG_OP = 'UPDATE' AND OLD.status != NEW.status THEN
         INSERT INTO public.order_status_history (order_id, status, created_by)
-        VALUES (NEW.id, NEW.status, NEW.customer_id);
+        VALUES (NEW.id, NEW.status, auth.uid());
+
+        -- If the order has become ready, notify the customer
+        IF NEW.status = 'ready' THEN
+            BEGIN
+                INSERT INTO public.notifications (user_id, created_by, title, message, type, data)
+                VALUES (
+                    NEW.customer_id,
+                    auth.uid(),
+                    'Order Ready',
+                    'Your order is ready for pickup',
+                    'order_update',
+                    jsonb_build_object('order_id', NEW.id)
+                );
+            EXCEPTION WHEN OTHERS THEN
+                NULL;
+            END;
+        END IF;
+
         RETURN NEW;
     END IF;
     
@@ -346,8 +416,20 @@ CREATE POLICY "Vendors can view customers for their orders" ON public.users
 CREATE POLICY "Anyone can view active vendor profiles" ON public.vendor_profiles
     FOR SELECT USING (is_active = true);
 
-CREATE POLICY "Vendors can update their own profile" ON public.vendor_profiles
-    FOR ALL USING (auth.uid() = id);
+-- Add owner_user_id to allow linking existing vendor_profiles to a user account
+ALTER TABLE public.vendor_profiles
+    ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES public.users(id);
+
+CREATE INDEX IF NOT EXISTS idx_vendor_profiles_owner_user_id ON public.vendor_profiles(owner_user_id);
+
+-- Vendors can manage their own profile either by primary key id or via owner_user_id mapping
+CREATE POLICY "Vendors can manage their own profile" ON public.vendor_profiles
+    FOR ALL USING (auth.uid() = id OR owner_user_id = auth.uid())
+    WITH CHECK (auth.uid() = id OR owner_user_id = auth.uid());
+
+-- Allow vendors to create their own vendor profile row (id must match their user id)
+CREATE POLICY "Vendors can create their own profile" ON public.vendor_profiles
+    FOR INSERT WITH CHECK (id = auth.uid());
 
 -- Menu items policies
 CREATE POLICY "Anyone can view available menu items" ON public.menu_items
@@ -367,13 +449,39 @@ CREATE POLICY "Vendors can manage their own menu categories" ON public.menu_cate
 
 -- Orders policies
 CREATE POLICY "Users can view their own orders" ON public.orders
-    FOR SELECT USING (customer_id = auth.uid() OR vendor_id = auth.uid());
+    FOR SELECT USING (
+        customer_id = auth.uid()
+        OR vendor_id = auth.uid()
+        OR EXISTS (
+            SELECT 1 FROM public.vendor_profiles vp
+            WHERE vp.id = vendor_id
+            AND vp.owner_user_id = auth.uid()
+        )
+    );
 
 CREATE POLICY "Customers can create orders" ON public.orders
     FOR INSERT WITH CHECK (customer_id = auth.uid());
 
 CREATE POLICY "Vendors can update their orders" ON public.orders
-    FOR UPDATE USING (vendor_id = auth.uid());
+    FOR UPDATE USING (
+        vendor_id = auth.uid()
+        OR EXISTS (
+            SELECT 1 FROM public.vendor_profiles vp
+            WHERE vp.id = vendor_id
+            AND vp.owner_user_id = auth.uid()
+        )
+    );
+
+-- Allow customers to cancel their own orders when order is still cancellable
+CREATE POLICY "Customers can cancel their own orders" ON public.orders
+    FOR UPDATE USING (
+        customer_id = auth.uid()
+        AND status IN ('pending', 'confirmed')
+    )
+    WITH CHECK (
+        customer_id = auth.uid()
+        AND status = 'cancelled'
+    );
 
 -- Order items policies
 CREATE POLICY "Users can view order items for their orders" ON public.order_items
@@ -381,7 +489,15 @@ CREATE POLICY "Users can view order items for their orders" ON public.order_item
         EXISTS (
             SELECT 1 FROM public.orders 
             WHERE id = order_id 
-            AND (customer_id = auth.uid() OR vendor_id = auth.uid())
+            AND (
+                customer_id = auth.uid()
+                OR vendor_id = auth.uid()
+                OR EXISTS (
+                    SELECT 1 FROM public.vendor_profiles vp
+                    WHERE vp.id = vendor_id
+                    AND vp.owner_user_id = auth.uid()
+                )
+            )
         )
     );
 
@@ -438,6 +554,16 @@ CREATE POLICY "Users can view their own notifications" ON public.notifications
 
 CREATE POLICY "Users can update their own notifications" ON public.notifications
     FOR UPDATE USING (user_id = auth.uid());
+
+-- Allow users to create notifications on behalf of their actions
+-- (created_by must match the authenticated user so apps cannot forge notifications from others)
+CREATE POLICY "Users can create notifications" ON public.notifications
+    FOR INSERT WITH CHECK (created_by = auth.uid());
+
+-- Allow users to mark their notifications as read
+CREATE POLICY "Users can mark notifications read" ON public.notifications
+    FOR UPDATE USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
 
 -- Vendor operating hours policies
 CREATE POLICY "Anyone can view operating hours" ON public.vendor_operating_hours

@@ -48,35 +48,61 @@ export default function VendorDashboardScreen() {
   // Load vendor data
   const loadVendorData = async () => {
     try {
-      if (!auth?.user?.id) return;
-      
+      // Support both auth shapes: auth.id or auth.user.id
+      const userId = auth?.id ?? auth?.user?.id;
+      if (!userId) return;
+
       setError(null);
-      
-      // Get vendor profile
-      const profileResult = await vendorService.getVendorProfile(auth.user.id);
-      if (profileResult.error) throw profileResult.error;
-      
-      setVendorProfile(profileResult.data);
-      
-      // Get analytics data
-      if (profileResult.data?.id) {
-        const analyticsResult = await vendorService.getVendorAnalytics(profileResult.data.id, 'today');
-        if (analyticsResult.error) throw analyticsResult.error;
-        
+
+      // Get vendor profile (may return null if profile isn't created yet)
+      let profileResult = await vendorService.getVendorProfile(userId);
+      if (profileResult.error) {
+        // Non-fatal: log and continue to attempt analytics where possible
+        console.warn('[VendorDashboard] getVendorProfile error', profileResult.error);
+      }
+
+      let profile = profileResult.data || null;
+
+      // If we didn't find a profile by id, try to find one by contact info (email/phone)
+      if (!profile) {
+        try {
+          const findResult = await vendorService.findVendorByContact(userId);
+          if (findResult.error) {
+            console.warn('[VendorDashboard] findVendorByContact error', findResult.error);
+          } else if (findResult.data) {
+            profile = findResult.data;
+            console.debug('[VendorDashboard] auto-linked vendor profile by contact', { vendorId: profile.id });
+          }
+        } catch (e) {
+          console.warn('[VendorDashboard] findVendorByContact exception', e?.message || e);
+        }
+      }
+
+      setVendorProfile(profile);
+
+      // Determine vendorId to use for analytics: prefer profile.id, fallback to userId
+      const vendorIdForAnalytics = profile?.id || userId;
+
+      // Get analytics data (attempt even if profile is missing)
+      const analyticsResult = await vendorService.getVendorAnalytics(vendorIdForAnalytics, 'today');
+      if (analyticsResult.error) {
+        console.warn('[VendorDashboard] getVendorAnalytics error', analyticsResult.error);
+      } else {
         setAnalytics(analyticsResult.data);
       }
     } catch (error) {
       console.error('Error loading vendor data:', error);
-      setError(error.message);
+      setError(error.message || String(error));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
+  const effectiveAuthId = auth?.id ?? auth?.user?.id;
   useEffect(() => {
     loadVendorData();
-  }, [auth?.user?.id]);
+  }, [effectiveAuthId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -96,18 +122,9 @@ export default function VendorDashboardScreen() {
     newCustomers: 0
   };
 
-  // Format recent orders
-  const recentOrders = analytics?.orders?.map(order => ({
-    id: order.id,
-    customer: order.users?.full_name || 'Customer',
-    items: order.order_items?.map(item => item.menu_items?.name).join(', ') || 'Order items',
-    amount: parseFloat(order.total_amount),
-    status: order.status,
-    time: formatRelativeTime(order.created_at)
-  })) || [];
-
   // Helper function to format relative time
   const formatRelativeTime = (dateString) => {
+    if (!dateString) return '—';
     const date = new Date(dateString);
     const now = new Date();
     const diffMs = now - date;
@@ -118,6 +135,16 @@ export default function VendorDashboardScreen() {
     if (diffMins < 1440) return `${Math.floor(diffMins / 60)} hr ago`;
     return `${Math.floor(diffMins / 1440)} day ago`;
   };
+
+  // Format recent orders safely
+  const recentOrders = (Array.isArray(analytics?.orders) ? analytics.orders : []).map(order => ({
+    id: order.id,
+    customer: order.users?.full_name || 'Customer',
+    items: (order.order_items || []).map(item => item.menu_items?.name).filter(Boolean).join(', ') || 'Order items',
+    amount: Number(order.total_amount) || 0,
+    status: order.status,
+    time: formatRelativeTime(order.created_at)
+  }));
 
   const handleQuickAction = async (action) => {
     await Haptics.selectionAsync();
@@ -477,12 +504,54 @@ export default function VendorDashboardScreen() {
           Dashboard
         </Text>
         <Text style={{
-          fontFamily: 'Inter_400Regular',
-          fontSize: 16,
-          color: colors.textSecondary,
-        }}>
-          Welcome back, {vendorProfile?.users?.full_name || auth?.name || 'Vendor'}!
-        </Text>
+              fontFamily: 'Inter_400Regular',
+              fontSize: 16,
+              color: colors.textSecondary,
+            }}>
+              Welcome back, {vendorProfile?.users?.full_name || auth?.name || 'Vendor'}!
+          </Text>
+          {!vendorProfile && (
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ color: colors.textSecondary, marginBottom: 8 }}>It looks like your vendor profile isn't set up yet — that's why dashboard numbers might be empty.</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity onPress={async () => {
+                  // Attempt to auto-link by contact info
+                  try {
+                    setLoading(true);
+                    const userId = auth?.id ?? auth?.user?.id;
+                    const { data: found, error: findErr } = await vendorService.findVendorByContact(userId);
+                    if (findErr) throw findErr;
+                    if (found) {
+                      setVendorProfile(found);
+                      const analyticsResult = await vendorService.getVendorAnalytics(found.id, 'today');
+                      if (!analyticsResult.error) setAnalytics(analyticsResult.data);
+                      Alert.alert('Linked', 'Your vendor profile was found and linked.');
+                    } else {
+                      // Create a minimal profile automatically
+                      const createResult = await vendorService.createVendorProfile(userId, { business_name: auth?.name || 'My Stall' });
+                      if (createResult.error) throw createResult.error;
+                      setVendorProfile(createResult.data);
+                      const analyticsResult = await vendorService.getVendorAnalytics(createResult.data.id, 'today');
+                      if (!analyticsResult.error) setAnalytics(analyticsResult.data);
+                      Alert.alert('Profile Created', 'A basic vendor profile was created for you. Please complete your settings.');
+                      router.push('/vendor-settings');
+                    }
+                  } catch (e) {
+                    console.error('Auto-link/create profile failed', e);
+                    Alert.alert('Error', e.message || 'Failed to link or create profile');
+                  } finally {
+                    setLoading(false);
+                  }
+                }} style={{ backgroundColor: colors.primary, padding: 10, borderRadius: 8, marginRight: 8 }}>
+                  <Text style={{ color: 'white', fontFamily: 'Inter_500Medium' }}>Auto-link / Create profile</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => router.push('/vendor-settings')} style={{ backgroundColor: colors.surface, padding: 10, borderRadius: 8 }}>
+                  <Text style={{ color: colors.text, fontFamily: 'Inter_500Medium' }}>Open Settings</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
       </View>
 
       <ScrollView

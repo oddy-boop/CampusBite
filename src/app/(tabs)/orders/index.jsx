@@ -24,6 +24,7 @@ import {
   Calendar
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { Linking } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -31,6 +32,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/utils/auth/useAuth';
 import { useCart } from '@/contexts/CartContext';
 import { getCustomerOrders, cancelOrder } from '@/lib/customerService';
+import notificationService from '@/lib/notificationService';
 
 export default function OrdersScreen() {
   const insets = useSafeAreaInsets();
@@ -43,9 +45,11 @@ export default function OrdersScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [orders, setOrders] = useState([]);
+  const [cancelling, setCancelling] = useState({});
   const scrollY = useRef(new Animated.Value(0)).current;
 
   const headerHeight = 140;
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Load orders from database
   const loadOrders = async () => {
@@ -92,6 +96,15 @@ export default function OrdersScreen() {
   // Reload orders when the authenticated user changes or when the screen becomes focused
   useEffect(() => {
     loadOrders();
+    // Load unread notifications count for this user
+    (async () => {
+      try {
+        if (auth?.id) {
+          const { data } = await notificationService.getUnread(auth.id);
+          setUnreadCount((data || []).length);
+        }
+      } catch (e) {}
+    })();
   }, [auth?.id, isFocused]);
 
   const getStatusConfig = (status) => {
@@ -235,6 +248,45 @@ export default function OrdersScreen() {
             Alert.alert('Success', 'Items added to cart!');
           }
         },
+      ]
+    );
+  };
+
+  const handleCancelOrder = async (order) => {
+    if (!auth?.id) {
+      Alert.alert('Sign In Required', 'Please sign in to cancel an order.');
+      return;
+    }
+
+    if (!order || !order.id) return;
+
+    Alert.alert(
+      'Cancel Order',
+      `Are you sure you want to cancel order ${order.order_number || order.id}?`,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes',
+          onPress: async () => {
+            try {
+              setCancelling(prev => ({ ...prev, [order.id]: true }));
+              const { data, error } = await cancelOrder(order.id, auth.id);
+              if (error) {
+                console.error('Cancel order error:', error);
+                Alert.alert('Cancel Failed', error.message || String(error));
+              } else {
+                // Optimistically update UI
+                setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'cancelled' } : o));
+                Alert.alert('Order Cancelled', 'Your order has been cancelled.');
+              }
+            } catch (e) {
+              console.error('Cancel order exception:', e);
+              Alert.alert('Error', 'Failed to cancel order. Please try again.');
+            } finally {
+              setCancelling(prev => ({ ...prev, [order.id]: false }));
+            }
+          }
+        }
       ]
     );
   };
@@ -404,26 +456,88 @@ export default function OrdersScreen() {
           )}
 
           {/* Action Buttons */}
-          {(order.status === 'completed') && (
-            <TouchableOpacity
-              style={{
-                backgroundColor: colors.primary,
-                borderRadius: 8,
-                paddingVertical: 10,
-                alignItems: 'center',
-                marginTop: 12,
-              }}
-              onPress={() => handleReorderAll(order)}
-            >
-              <Text style={{
-                fontFamily: 'Inter_500Medium',
-                fontSize: 14,
-                color: 'white',
-              }}>
-                Reorder
-              </Text>
-            </TouchableOpacity>
-          )}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {(order.status === 'completed') && (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: colors.primary,
+                  borderRadius: 8,
+                  paddingVertical: 10,
+                  alignItems: 'center',
+                  marginTop: 12,
+                  paddingHorizontal: 16,
+                }}
+                onPress={() => handleReorderAll(order)}
+              >
+                <Text style={{
+                  fontFamily: 'Inter_500Medium',
+                  fontSize: 14,
+                  color: 'white',
+                }}>
+                  Reorder
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {(!['delivered', 'cancelled'].includes(order.status)) && (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 8,
+                  paddingVertical: 10,
+                  alignItems: 'center',
+                  marginTop: 12,
+                  paddingHorizontal: 16,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  marginRight: 8,
+                }}
+                onPress={() => handleCancelOrder(order)}
+                disabled={!!cancelling[order.id]}
+              >
+                <Text style={{
+                  fontFamily: 'Inter_500Medium',
+                  fontSize: 14,
+                  color: cancelling[order.id] ? colors.textSecondary : colors.error,
+                }}>
+                  {cancelling[order.id] ? 'Cancelling...' : 'Cancel'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Call Vendor button - customers can call the vendor's business phone */}
+            {order.vendor_profiles?.business_phone && (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: colors.primary,
+                  borderRadius: 8,
+                  paddingVertical: 10,
+                  alignItems: 'center',
+                  marginTop: 12,
+                  paddingHorizontal: 16,
+                }}
+                onPress={async () => {
+                  await Haptics.selectionAsync();
+                  const phone = order.vendor_profiles.business_phone;
+                  const tel = `tel:${phone}`;
+                  const supported = await Linking.canOpenURL(tel);
+                  if (supported) {
+                    Linking.openURL(tel);
+                  } else {
+                    Alert.alert('Cannot Call', 'This device cannot make phone calls');
+                  }
+                }}
+              >
+                <Text style={{
+                  fontFamily: 'Inter_500Medium',
+                  fontSize: 14,
+                  color: 'white',
+                }}>
+                  Call Vendor
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -519,14 +633,19 @@ export default function OrdersScreen() {
         }}
       >
         <View style={{ paddingHorizontal: 24, paddingBottom: 16 }}>
-          <Text style={{
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{
             fontFamily: 'Inter_600SemiBold',
             fontSize: 28,
             color: colors.text,
             marginBottom: 20,
-          }}>
-            Orders
-          </Text>
+            }}>
+              Orders
+            </Text>
+            <TouchableOpacity onPress={() => router.push('/notifications')} style={{ padding: 8 }}>
+              <Text style={{ color: colors.primary }}>{unreadCount > 0 ? `${unreadCount} new` : 'Notifications'}</Text>
+            </TouchableOpacity>
+          </View>
 
           {/* Tab Navigation */}
           <View style={{

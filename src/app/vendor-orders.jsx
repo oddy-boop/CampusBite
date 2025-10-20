@@ -97,6 +97,22 @@ export default function VendorOrdersScreen() {
     loadOrders();
   }, [auth?.user?.id, auth?.id, selectedFilter]);
 
+
+  if (!loading && !vendorProfile) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+        <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 18, marginBottom: 8 }}>Vendor profile not set up</Text>
+        <Text style={{ color: colors.textSecondary, textAlign: 'center', marginBottom: 16 }}>You don't have a vendor profile yet. Set up your business details to start receiving orders.</Text>
+        <TouchableOpacity
+          style={{ backgroundColor: colors.primary, paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}
+          onPress={() => router.push('/vendor-settings')}
+        >
+          <Text style={{ color: 'white', fontFamily: 'Inter_500Medium' }}>Set up profile</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   const onRefresh = async () => {
     setRefreshing(true);
     await loadOrders();
@@ -605,7 +621,7 @@ export default function VendorOrdersScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar style={statusBarStyle} />
+  <StatusBar style={statusBarStyle} />
 
       {/* Header */}
       <View

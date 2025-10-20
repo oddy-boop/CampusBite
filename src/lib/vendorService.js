@@ -5,19 +5,147 @@ export const vendorService = {
   // Get vendor profile and basic info
   async getVendorProfile(userId) {
     try {
-      const { data, error } = await supabase
+      // 1) Try to find by primary key (id)
+      let { data, error } = await supabase
         .from('vendor_profiles')
         .select(`
           *,
-          users!id(id, email, full_name, phone)
+          users!id(id, email, full_name, phone),
+          vendor_operating_hours(*)
         `)
         .eq('id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      // 2) If not found, try lookup by owner_user_id (for legacy profiles linked to a different PK)
+      // Note: owner_user_id-based lookups are optional and require a schema migration.
+      // If the DB hasn't been migrated yet, skip owner_user_id lookup and rely on
+      // email/phone fallback below.
+
+      // 3) If still not found, try matching by the authenticated user's email/phone
+      if (!data) {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          const userEmail = sessionData?.session?.user?.email;
+          const userPhone = sessionData?.session?.user?.phone;
+
+          if (userEmail) {
+            const { data: byEmail, error: byEmailErr } = await supabase
+              .from('vendor_profiles')
+              .select(`
+                *,
+                users!id(id, email, full_name, phone),
+                vendor_operating_hours(*)
+              `)
+              .ilike('business_email', userEmail)
+              .maybeSingle();
+            if (byEmailErr) console.warn('[vendorService] getVendorProfile email lookup failed', byEmailErr);
+            if (byEmail) data = byEmail;
+          }
+
+          if (!data && userPhone) {
+            const normalizedPhone = userPhone.replace(/[^0-9]/g, '');
+            const { data: byPhone, error: byPhoneErr } = await supabase
+              .from('vendor_profiles')
+              .select(`
+                *,
+                users!id(id, email, full_name, phone),
+                vendor_operating_hours(*)
+              `)
+              .filter('business_phone', 'ilike', `%${normalizedPhone}%`)
+              .maybeSingle();
+            if (byPhoneErr) console.warn('[vendorService] getVendorProfile phone lookup failed', byPhoneErr);
+            if (byPhone) data = byPhone;
+          }
+        } catch (sessErr) {
+          console.warn('[vendorService] session lookup failed during vendor profile fallback', sessErr);
+        }
+      }
+
+      return { data, error: null };
+    } catch (error) {
+      console.error('Error fetching vendor profile:', error);
+      return { data: null, error };
+    }
+  },
+
+  // Create a vendor profile (used when vendor has not set up a profile yet)
+  async createVendorProfile(userId, profileData) {
+    try {
+      const payload = {
+        id: userId,
+        business_name: profileData.business_name || 'My Stall',
+        address: profileData.address || 'Unknown',
+        business_phone: profileData.business_phone || null,
+        business_email: profileData.business_email || null,
+        delivery_radius: profileData.delivery_radius || 5.0,
+        minimum_order_amount: profileData.minimum_order_amount || 0.0,
+        delivery_fee: profileData.delivery_fee || 0.0,
+        is_active: profileData.is_active ?? true,
+        is_accepting_orders: profileData.is_accepting_orders ?? true,
+        push_notifications_enabled: profileData.push_notifications_enabled ?? true,
+        email_notifications_enabled: profileData.email_notifications_enabled ?? false,
+      };
+
+      const { data, error } = await supabase
+        .from('vendor_profiles')
+        .insert(payload)
+        .select()
         .single();
 
       if (error) throw error;
       return { data, error: null };
     } catch (error) {
-      console.error('Error fetching vendor profile:', error);
+      console.error('Error creating vendor profile:', error);
+      return { data: null, error };
+    }
+  },
+
+  // Find a vendor profile by matching the authenticated user's email or phone
+  async findVendorByContact(userId) {
+    try {
+      const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) {
+        console.warn('[vendorService] findVendorByContact - session error', sessErr);
+      }
+      const userEmail = sessionData?.session?.user?.email;
+      const userPhone = sessionData?.session?.user?.phone;
+
+      // Try by business email first
+      if (userEmail) {
+        const { data: byEmail, error: byEmailErr } = await supabase
+          .from('vendor_profiles')
+          .select(`
+            *,
+            users!id(id, email, full_name, phone),
+            vendor_operating_hours(*)
+          `)
+          .ilike('business_email', userEmail)
+          .maybeSingle();
+        if (byEmailErr) console.warn('[vendorService] findVendorByContact email lookup failed', byEmailErr);
+        if (byEmail) return { data: byEmail, error: null };
+      }
+
+      // Try by phone (normalized)
+      if (userPhone) {
+        const normalizedPhone = userPhone.replace(/[^0-9]/g, '');
+        const { data: byPhone, error: byPhoneErr } = await supabase
+          .from('vendor_profiles')
+          .select(`
+            *,
+            users!id(id, email, full_name, phone),
+            vendor_operating_hours(*)
+          `)
+          .filter('business_phone', 'ilike', `%${normalizedPhone}%`)
+          .maybeSingle();
+        if (byPhoneErr) console.warn('[vendorService] findVendorByContact phone lookup failed', byPhoneErr);
+        if (byPhone) return { data: byPhone, error: null };
+      }
+
+      return { data: null, error: null };
+    } catch (error) {
+      console.error('[vendorService] findVendorByContact error', error);
       return { data: null, error };
     }
   },
@@ -104,6 +232,15 @@ export const vendorService = {
         return { data: null, error: ordersErr };
       }
 
+      // Debug: surface the authenticated session user id used for RLS checks
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const sessionUserId = sessionData?.session?.user?.id;
+        console.debug('[vendorService] sessionUserId for getVendorOrders', { sessionUserId, vendorId });
+      } catch (sessErr) {
+        console.warn('[vendorService] failed to read session for debug', sessErr);
+      }
+
       try { console.debug('[vendorService] getVendorOrders - orders fetched', { vendorId, count: (orders || []).length }); } catch (e) {}
 
       if (!orders || orders.length === 0) return { data: [], error: null };
@@ -186,15 +323,7 @@ export const vendorService = {
 
       if (error) throw error;
 
-      // Add to status history (use created_by/created_at fields defined in schema)
-      await supabase
-        .from('order_status_history')
-        .insert({
-          order_id: orderId,
-          status: newStatus,
-          created_by: vendorId,
-          created_at: new Date().toISOString()
-        });
+      // Status history will be recorded by the database trigger using auth.uid().
 
       return { data, error: null };
     } catch (error) {
@@ -368,10 +497,10 @@ export const vendorService = {
         .select(`
           *,
           vendor_operating_hours(*),
-          users!inner(email, full_name, phone)
+          users(email, full_name, phone)
         `)
         .eq('id', vendorId)
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
       return { data, error: null };

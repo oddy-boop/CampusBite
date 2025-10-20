@@ -301,8 +301,9 @@ export const customerService = {
 
       if (fetchError) throw fetchError;
 
-      if (['delivered', 'cancelled'].includes(order.status)) {
-        throw new Error('This order cannot be cancelled');
+      // Only allow customers to cancel orders that are still pending or confirmed.
+      if (!['pending', 'confirmed'].includes(order.status)) {
+        throw new Error('This order cannot be cancelled at this stage');
       }
 
       // Update order status
