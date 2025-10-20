@@ -168,7 +168,14 @@ export function CartProvider({ children }) {
   };
 
   const formatPrice = (price) => {
-    return `₵${price.toFixed(2)}`;
+    // Accept numbers or numeric strings. If invalid, return a safe default and log.
+    const num = typeof price === 'number' ? price : (price != null ? Number(price) : NaN);
+    if (!Number.isFinite(num)) {
+      // eslint-disable-next-line no-console
+      console.warn('[CartContext] formatPrice called with invalid value', price);
+      return '₵0.00';
+    }
+    return `₵${num.toFixed(2)}`;
   };
 
   const value = {

@@ -242,11 +242,14 @@ CREATE TRIGGER update_reviews_updated_at BEFORE UPDATE ON public.reviews
 CREATE TRIGGER update_vendor_analytics_updated_at BEFORE UPDATE ON public.vendor_analytics
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Create sequence for order numbers
+CREATE SEQUENCE IF NOT EXISTS order_number_seq START 1;
+
 -- Function to generate order numbers
 CREATE OR REPLACE FUNCTION generate_order_number()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW.order_number = 'ORD-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-' || LPAD(EXTRACT(EPOCH FROM NOW())::INTEGER::TEXT, 6, '0');
+    NEW.order_number = 'ORD-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-' || LPAD(NEXTVAL('order_number_seq')::TEXT, 6, '0');
     RETURN NEW;
 END;
 $$ language 'plpgsql';
@@ -328,6 +331,17 @@ CREATE POLICY "Users can view their own profile" ON public.users
 CREATE POLICY "Users can update their own profile" ON public.users
     FOR UPDATE USING (auth.uid() = id);
 
+-- Allow vendors to view basic customer info for orders that belong to them
+CREATE POLICY "Vendors can view customers for their orders" ON public.users
+    FOR SELECT USING (
+        auth.uid() = id
+        OR EXISTS (
+            SELECT 1 FROM public.orders
+            WHERE customer_id = public.users.id
+            AND vendor_id = auth.uid()
+        )
+    );
+
 -- Vendor profiles policies
 CREATE POLICY "Anyone can view active vendor profiles" ON public.vendor_profiles
     FOR SELECT USING (is_active = true);
@@ -368,6 +382,42 @@ CREATE POLICY "Users can view order items for their orders" ON public.order_item
             SELECT 1 FROM public.orders 
             WHERE id = order_id 
             AND (customer_id = auth.uid() OR vendor_id = auth.uid())
+        )
+    );
+
+-- Allow customers to insert items for orders they own (used during checkout)
+CREATE POLICY "Customers can insert order items for their orders" ON public.order_items
+    FOR INSERT WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.orders
+            WHERE id = order_id
+            AND customer_id = auth.uid()
+        )
+    );
+
+-- Allow vendors to update order items for orders that belong to them (if needed)
+CREATE POLICY "Vendors can update their order items" ON public.order_items
+    FOR UPDATE USING (
+        EXISTS (
+            SELECT 1 FROM public.orders
+            WHERE id = order_id
+            AND vendor_id = auth.uid()
+        )
+    ) WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.orders
+            WHERE id = order_id
+            AND vendor_id = auth.uid()
+        )
+    );
+
+-- Allow customers to delete their own order items (typically for order cancellations/edits)
+CREATE POLICY "Customers can delete their own order items" ON public.order_items
+    FOR DELETE USING (
+        EXISTS (
+            SELECT 1 FROM public.orders
+            WHERE id = order_id
+            AND customer_id = auth.uid()
         )
     );
 
@@ -419,9 +469,16 @@ CREATE TRIGGER create_default_operating_hours_trigger
     AFTER INSERT ON public.vendor_profiles
     FOR EACH ROW EXECUTE FUNCTION create_default_operating_hours();
 
--- Insert some sample data for testing
-INSERT INTO public.menu_categories (vendor_id, name, description) VALUES
-    ('00000000-0000-0000-0000-000000000000', 'Main Dishes', 'Our signature main courses'),
-    ('00000000-0000-0000-0000-000000000000', 'Sides', 'Perfect accompaniments'),
-    ('00000000-0000-0000-0000-000000000000', 'Drinks', 'Refreshing beverages'),
-    ('00000000-0000-0000-0000-000000000000', 'Desserts', 'Sweet endings');
+-- Function to automatically create user profile when auth user is created
+CREATE OR REPLACE FUNCTION create_user_profile()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.users (id, email, full_name)
+    VALUES (NEW.id, NEW.email, COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', 'User'));
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER create_user_profile_trigger 
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION create_user_profile();

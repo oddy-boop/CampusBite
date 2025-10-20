@@ -25,6 +25,8 @@ import {
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/utils/auth/useAuth';
 import { useCart } from '@/contexts/CartContext';
@@ -56,11 +58,26 @@ export default function OrdersScreen() {
     try {
       setError(null);
       const { data, error: fetchError } = await getCustomerOrders(auth.id);
-      
+
       if (fetchError) {
         throw fetchError;
       }
-      
+
+      // Merge cached recent order from checkout if present so the user sees their new order immediately
+      try {
+        const cached = await AsyncStorage.getItem('@campusbite_recent_order');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed?.customer_id === auth.id && !((data || []).find(o => o.id === parsed.id))) {
+            (data || []).unshift(parsed);
+            await AsyncStorage.removeItem('@campusbite_recent_order');
+          }
+        }
+      } catch (cacheErr) {
+        console.warn('[OrdersScreen] failed to merge cached order', cacheErr);
+      }
+
+      try { console.debug('[OrdersScreen] loadOrders result', { count: (data || []).length }); } catch (e) {}
       setOrders(data || []);
     } catch (err) {
       console.error('Error loading orders:', err);
@@ -70,12 +87,29 @@ export default function OrdersScreen() {
     }
   };
 
+  const isFocused = useIsFocused();
+
+  // Reload orders when the authenticated user changes or when the screen becomes focused
   useEffect(() => {
     loadOrders();
-  }, []);
+  }, [auth?.id, isFocused]);
 
   const getStatusConfig = (status) => {
     switch (status) {
+      case 'pending':
+        return {
+          color: colors.textSecondary,
+          icon: <Clock size={16} color={colors.textSecondary} />,
+          text: 'Pending',
+          bgColor: colors.textSecondary + '10',
+        };
+      case 'confirmed':
+        return {
+          color: colors.primary,
+          icon: <CheckCircle size={16} color={colors.primary} />,
+          text: 'Confirmed',
+          bgColor: colors.primary + '10',
+        };
       case 'preparing':
         return {
           color: colors.warning,
@@ -89,6 +123,13 @@ export default function OrdersScreen() {
           icon: <Package size={16} color={colors.secondary} />,
           text: 'Ready for Pickup',
           bgColor: colors.secondary + '20',
+        };
+      case 'out_for_delivery':
+        return {
+          color: colors.primary,
+          icon: <Package size={16} color={colors.primary} />,
+          text: 'Out for Delivery',
+          bgColor: colors.primary + '10',
         };
       case 'completed':
         return {
@@ -104,6 +145,13 @@ export default function OrdersScreen() {
           text: 'Cancelled',
           bgColor: colors.error + '20',
         };
+      case 'delivered':
+        return {
+          color: colors.success,
+          icon: <CheckCircle size={16} color={colors.success} />,
+          text: 'Delivered',
+          bgColor: colors.success + '10',
+        };
       default:
         return {
           color: colors.textSecondary,
@@ -117,7 +165,8 @@ export default function OrdersScreen() {
   const filterOrders = (orders, tab) => {
     switch (tab) {
       case 'active':
-        return orders.filter(order => ['preparing', 'ready'].includes(order.status));
+        // Active includes pending/confirmed orders as well as preparing/ready/out_for_delivery
+        return orders.filter(order => ['pending', 'confirmed', 'preparing', 'ready', 'out_for_delivery'].includes(order.status));
       case 'completed':
         return orders.filter(order => order.status === 'completed');
       case 'cancelled':
@@ -156,7 +205,7 @@ export default function OrdersScreen() {
     await Haptics.selectionAsync();
     Alert.alert(
       `Order ${order.order_number}`,
-      `Status: ${getStatusConfig(order.status).text}\nVendor: ${order.vendor_profiles?.business_name || 'Vendor'}\nTotal: ${formatPrice(order.total_amount)}`,
+  `Status: ${getStatusConfig(order.status).text}\nVendor: ${order.vendor_profiles?.business_name || 'Vendor'}\nTotal: ${formatPrice(order.total_amount ?? order.total ?? order.totalAmount ?? 0)}`,
       [
         { text: 'Close', style: 'cancel' },
         ...(order.status === 'completed' ? [{ 
@@ -326,7 +375,7 @@ export default function OrdersScreen() {
               fontSize: 16,
               color: colors.primary,
             }}>
-              {formatPrice(order.total)}
+              {formatPrice(order.total_amount ?? order.total ?? order.totalAmount ?? 0)}
             </Text>
           </View>
 

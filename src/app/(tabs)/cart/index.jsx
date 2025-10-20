@@ -14,6 +14,7 @@ import { Image } from 'expo-image';
 import { Trash2, Plus, Minus, Clock, ShoppingBag } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useCart } from '@/contexts/CartContext';
 import { useAuth } from '@/utils/auth';
@@ -148,8 +149,8 @@ export default function CartScreen() {
         })),
       };
 
-      // Create order in database
-      const { data, error } = await customerService.createOrder(orderData);
+  // Create order in database
+  const { data, error } = await customerService.createOrder(orderData);
 
       if (error) {
         throw error;
@@ -157,6 +158,15 @@ export default function CartScreen() {
 
       // Clear cart on success
       clearCart();
+
+      // Persist the created order locally so the Orders screen can show it immediately
+      try {
+        if (data) {
+          await AsyncStorage.setItem('@campusbite_recent_order', JSON.stringify(data));
+        }
+      } catch (e) {
+        console.warn('[Cart] failed to cache recent order locally', e);
+      }
 
       // Show success message
       Alert.alert(

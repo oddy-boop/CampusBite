@@ -46,28 +46,47 @@ export default function VendorOrdersScreen() {
   // Load vendor data and orders
   const loadOrders = async () => {
     try {
-      if (!auth?.user?.id) return;
-      
-      setError(null);
-      
-      // Get vendor profile first
-      const profileResult = await vendorService.getVendorProfile(auth.user.id);
-      if (profileResult.error) throw profileResult.error;
-      
-      setVendorProfile(profileResult.data);
-      
-      // Get orders for this vendor
-      if (profileResult.data?.id) {
-        const ordersResult = await vendorService.getVendorOrders(profileResult.data.id, {
-          status: selectedFilter === 'all' ? null : selectedFilter
-        });
-        if (ordersResult.error) throw ordersResult.error;
-        
-        setOrders(ordersResult.data || []);
+      // Support both auth shapes: some hooks return auth.id, others set auth.user.id
+      const userId = auth?.id ?? auth?.user?.id;
+      if (!userId) {
+        setVendorProfile(null);
+        setOrders([]);
+        return;
       }
+
+      setError(null);
+      try { console.debug('[VendorOrders] loading for userId=', userId); } catch (e) {}
+
+      // Get vendor profile first
+      const profileResult = await vendorService.getVendorProfile(userId);
+      if (profileResult.error) {
+        console.warn('[VendorOrders] failed to load vendor profile', profileResult.error);
+        throw profileResult.error;
+      }
+
+      setVendorProfile(profileResult.data);
+
+      // Get orders for this vendor
+      const vendorId = profileResult.data?.id;
+      if (!vendorId) {
+        try { console.debug('[VendorOrders] no vendor profile found for user', userId); } catch (e) {}
+        setOrders([]);
+        return;
+      }
+
+      const ordersResult = await vendorService.getVendorOrders(vendorId, {
+        status: selectedFilter === 'all' ? null : selectedFilter
+      });
+      if (ordersResult.error) {
+        console.warn('[VendorOrders] failed to load orders', ordersResult.error);
+        throw ordersResult.error;
+      }
+
+      try { console.debug('[VendorOrders] orders fetched', { vendorId, count: (ordersResult.data || []).length }); } catch (e) {}
+      setOrders(ordersResult.data || []);
     } catch (error) {
       console.error('Error loading orders:', error);
-      setError(error.message);
+      setError(error?.message || String(error));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -76,7 +95,7 @@ export default function VendorOrdersScreen() {
 
   useEffect(() => {
     loadOrders();
-  }, [auth?.user?.id, selectedFilter]);
+  }, [auth?.user?.id, auth?.id, selectedFilter]);
 
   const onRefresh = async () => {
     setRefreshing(true);

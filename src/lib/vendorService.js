@@ -83,31 +83,75 @@ export const vendorService = {
     }
   },
 
-  // Get vendor orders with pagination
+  // Get vendor orders with pagination (two-step fetch to avoid nested-select RLS issues)
   async getVendorOrders(vendorId, { page = 1, limit = 20, status = null } = {}) {
     try {
-      let query = supabase
+      if (!vendorId) return { data: [], error: null };
+
+      // 1) Fetch minimal order rows first
+      let ordersQuery = supabase
         .from('orders')
-        .select(`
-          *,
-          users!inner(full_name, phone),
-          order_items(
-            *,
-            menu_items(name, price)
-          )
-        `)
+        .select('id, order_number, customer_id, status, subtotal, delivery_fee, total_amount, special_instructions, delivery_address, created_at')
         .eq('vendor_id', vendorId)
         .order('created_at', { ascending: false })
         .range((page - 1) * limit, page * limit - 1);
 
-      if (status) {
-        query = query.eq('status', status);
+      if (status) ordersQuery = ordersQuery.eq('status', status);
+
+      const { data: orders, error: ordersErr } = await ordersQuery;
+      if (ordersErr) {
+        console.error('Error fetching vendor orders (minimal):', ordersErr);
+        return { data: null, error: ordersErr };
       }
 
-      const { data, error } = await query;
+      try { console.debug('[vendorService] getVendorOrders - orders fetched', { vendorId, count: (orders || []).length }); } catch (e) {}
 
-      if (error) throw error;
-      return { data, error: null };
+      if (!orders || orders.length === 0) return { data: [], error: null };
+
+      const customerIds = [...new Set(orders.map(o => o.customer_id).filter(Boolean))];
+      const orderIds = orders.map(o => o.id);
+
+      // 2) Fetch customer info separately (may be restricted by users RLS; see policies)
+      let customers = [];
+      if (customerIds.length > 0) {
+        const { data: cData, error: cErr } = await supabase
+          .from('users')
+          .select('id, full_name, phone')
+          .in('id', customerIds);
+        if (cErr) {
+          console.warn('[vendorService] getVendorOrders - users fetch failed', cErr);
+        } else {
+          customers = cData || [];
+        }
+      }
+
+      // 3) Fetch order items and menu items for these orders
+      let itemsByOrder = {};
+      if (orderIds.length > 0) {
+        const { data: itemsData, error: itemsErr } = await supabase
+          .from('order_items')
+          .select('*, menu_items(name, price)')
+          .in('order_id', orderIds);
+
+        if (itemsErr) {
+          console.warn('[vendorService] getVendorOrders - order_items fetch failed', itemsErr);
+        } else {
+          (itemsData || []).forEach(it => {
+            itemsByOrder[it.order_id] = itemsByOrder[it.order_id] || [];
+            itemsByOrder[it.order_id].push(it);
+          });
+        }
+      }
+
+      // Merge data into enriched order objects
+      const enriched = orders.map(o => ({
+        ...o,
+        users: customers.find(c => c.id === o.customer_id) || null,
+        order_items: itemsByOrder[o.id] || [],
+      }));
+
+      try { console.debug('[vendorService] getVendorOrders - enriched orders', { vendorId, count: enriched.length }); } catch (e) {}
+      return { data: enriched, error: null };
     } catch (error) {
       console.error('Error fetching vendor orders:', error);
       return { data: null, error };
@@ -142,14 +186,14 @@ export const vendorService = {
 
       if (error) throw error;
 
-      // Add to status history
+      // Add to status history (use created_by/created_at fields defined in schema)
       await supabase
         .from('order_status_history')
         .insert({
           order_id: orderId,
           status: newStatus,
-          changed_by: vendorId,
-          changed_at: new Date().toISOString()
+          created_by: vendorId,
+          created_at: new Date().toISOString()
         });
 
       return { data, error: null };
